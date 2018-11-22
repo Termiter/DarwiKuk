@@ -9,12 +9,10 @@ unsigned long zacatek = millis(); //uloží si aktuální čas kvůli měření 
 //    =                                                     =
 //    =======================================================
 //
-//    DarwiKuk 2.0_6 2018-02-27
-int ver = 6;
-//      * Přidán automatický update FW, velmi významné vylepšení, proto změna verze na 2.0
-//      * Optimalizace proměnných
-//      * Zpřesnění měření času potřebného pro spánek
-//      * V případě neúspěšného poslání dat na server to zkouší ještě 15×
+//    DarwiKuk 2.1_7 2018-08-27
+int ver = 7;
+//      * Aktualizována knihovna WiFiManager 0.14.0
+//      * Aktualizována knihovna esp8266 2.4.2 
  
  
 //prodleva mezi měřeními v sekundach
