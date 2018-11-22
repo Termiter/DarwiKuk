@@ -8,8 +8,8 @@
 //    =                                                     =
 //    =======================================================
 //
-//    DarwiKuk 1.1-2 2018-01-20
-//      Měření zpřesněno opakovaným měřením se zanedbáním extrémních hodnot
+//    DarwiKuk 1.2-3 2018-01-25
+//      * Mezi měřeními upadne do hlubokého spánku. Je třeba propojit PIN D0 a RST.
  
  
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
@@ -24,14 +24,17 @@
 // 74800 je rychlost na které NodeMCU komunikuje po startu a vypisuje chybové hlášky, takže je vidět všechno co se děje
 #define SER 74880
  
+long zacatek = millis(); //uloží si aktuální čas kvůli měření trvání doby běhu skriptu, o ten pak zkrátí čekání do dalšího cyklu
+//prodleva mezi měřeními v sekundach
+int prodleva = 60 * 5; //5 minut
+//int prodleva = 30; //pro testování
+int poWiFi = 10 * 1000; //čas na odpojení WiFi před restartem
+ 
 String MAC(12); //proměnná kde se bude nacházet MAC adresa WiFi, používá se pro identifikaci měřidla v databázi
 String testconn = "http://iot.darwiniana.cz/testconn.txt"; //stránka obsahuje znak 1 a slouží k otestování připojení
 String newData = "http://iot.darwiniana.cz/new_data.php"; //sem posílá data
  
-//prodleva mezi měřeními v milisekundách, standardní hodnota je 5 minut - 1000 * 60 * 5
-int prodleva = 1000 * 60 * 5;
- 
-const int pocetMereni = 16; //počet měření kvůli přesnoti, měl by být dělitelný 4
+const int pocetMereni = 16; //počet měření kvůli přesnoti, musí být dělitelný 4
 float mereni[pocetMereni]; //pro ukládání jednotlivých měření
  
 // WiFiManager zajišťuje přepnutí na AP a vložení SSID a hesla
@@ -50,37 +53,6 @@ Adafruit_TSL2561_Unified tsl = Adafruit_TSL2561_Unified(TSL2561_ADDR_FLOAT, 1234
 #include <Adafruit_BME280.h>
 #define BME280_ADRESA (0x76)
 Adafruit_BME280 bme;
- 
-//=======================================
-//vrací TRUE když je připojení k serveru k dispozici
-boolean inetCheck() {
-  digitalWrite(LED_PIN, LOW); // rozsviti LEDku
-  boolean inet = false;
-  HTTPClient http;
-  http.begin(testconn);
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    String payload = http.getString();
-    if (payload.charAt(0) == '1') {
-      inet = true;
-      digitalWrite(LED_PIN, HIGH); // zhasne LEDku - pripojeno
-    }
-  }
-  http.end();
-  if (!inet and WiFi.status() == WL_CONNECTED) {
-    ESP.restart(); //pokud dojde ke ztrate pripojeni, restart
-  }
-  return (inet);
-}
- 
-//=======================================
-//neodejde, dokud se nepřipojí
-void inet() {
-  while (!inetCheck()) {
-    wifiManager.autoConnect("DarwiKuk");
-    //ESP.restart();
-  }
-}
  
 //================================================
 //vrací MAC adrresu WiFi
@@ -120,6 +92,7 @@ void setup() {
   Serial.println(); Serial.println(); Serial.println();
  
   pinMode(LED_PIN, OUTPUT); //oznamovací LED
+  digitalWrite(LED_PIN, LOW); // hned po startu rozsviti LEDku
  
   Wire.begin();
  
@@ -135,15 +108,25 @@ void setup() {
   //nastaví wifiManager pro uživatelské nastavení WiFi
   wifiManager.setAPStaticIPConfig(IPAddress(10, 10, 10, 10), IPAddress(10, 10, 10, 10), IPAddress(255, 255, 255, 0)); //nastaví adresu AP
   wifiManager.setConfigPortalTimeout(wifiTimeout);
-}
- 
-//================================================
-void loop() {
-  int cas = millis(); //uloží si aktuální čas
  
   //nepokračuje, dokud není přístupný server pro ukládání údajů
-  inet();
+  wifiManager.autoConnect("DarwiKuk");
+  HTTPClient http;
+  http.begin(testconn);
+  boolean inet = false;
+  int httpCode = http.GET(); //zavolá stránku pro test dostupnosti serveru
+  String payload = http.getString();
+  if (payload.charAt(0) == '1') {
+    inet = true;
+  }
  
+  if (!inet) { //nepodařilo se připojit k AP, případně není dostupný server
+    WiFi.mode(WIFI_OFF); //vypne WiFi
+    delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
+    ESP.deepSleep(1e6);//za jednu sekundu se restartuje
+  }
+ 
+  //začneme měřit
   //načte do h vlhkost
   for (int i = 0; i < pocetMereni; i++) {
     mereni[i] = bme.readHumidity();
@@ -181,25 +164,37 @@ void loop() {
   Serial.println(l);
  
   //pošle data jako GET
-  HTTPClient http; //nasteví třídu http
   String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l);
   Serial.println(data);
   http.begin(data);
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    String payload = http.getString();   //Get the request response payload
-    if (payload == "1") {
-      Serial.println("Data uspesne zapsana na server.");
-    }
-    else {
-      Serial.println("Neco se pokazilo, data nejsou na serveru.");
-    }
-  }
-  http.end();   //Close connection
- 
-  //počká stanovený čas, než začne měřit znovu
-  while (millis() < (cas + prodleva)) {
-    delay(100);
+  httpCode = http.GET();
+  payload = http.getString();   //odešle data na server, zpět by se měla vrátit 1
+  Serial.print("Server vratil: ");
+  Serial.println(payload);
+  if (payload == "1") {
+    Serial.println("Data uspesne zapsana na server.");
   }
  
+  else {
+    Serial.println("Nepovedlo se připojit se na server. Restart!");
+    WiFi.mode(WIFI_OFF); //vypne WiFi
+  delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
+    ESP.deepSleep(1e6);//za jednu sekundu se restartuje
+  }
+ 
+  http.end();   //uzavře HTTP spojení
+  WiFi.mode(WIFI_OFF); //vypne WiFi
+  delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
+  digitalWrite(LED_PIN, HIGH); // zhasne LEDku
+ 
+  int spat = prodleva - ((millis() - zacatek ) / 1000);
+  Serial.print("Jdu spat na ");
+  Serial.print(spat);
+  Serial.println(" sekund");
+  ESP.deepSleep(spat * 1e6);
+}
+ 
+//================================================
+void loop() {
+  // tady nic není, měření proběhne jen jednou a je ukončeno restartem po stanovené prodlevě
 }
