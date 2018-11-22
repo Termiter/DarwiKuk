@@ -8,9 +8,11 @@
 //    =                                                     =
 //    =======================================================
 //
-//    DarwiKuk 1.2-3 2018-01-25
-//      * Mezi měřeními upadne do hlubokého spánku. Je třeba propojit PIN D0 a RST.
+//    DarwiKuk 1.3-4 2018-02-05
+//      * Opravena funkce na čtení MAC adresy
+//      * Přidáno číslo verze FW do záznamu
  
+String ver = "4";
  
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
 #include <DNSServer.h>
@@ -57,10 +59,8 @@ Adafruit_BME280 bme;
 //================================================
 //vrací MAC adrresu WiFi
 String macRead() {
-  byte mac[6];
-  String m(12);
-  WiFi.macAddress(mac);
-  m = String(mac[5], HEX) + String(mac[4], HEX) + String(mac[3], HEX) + String(mac[2], HEX) + String(mac[1], HEX) + String(mac[0], HEX);
+  String m = WiFi.macAddress();
+  m.remove(2, 1);  m.remove(4, 1);  m.remove(6, 1);  m.remove(8, 1);  m.remove(10, 1);
   return (m);
 }
  
@@ -112,18 +112,25 @@ void setup() {
   //nepokračuje, dokud není přístupný server pro ukládání údajů
   wifiManager.autoConnect("DarwiKuk");
   HTTPClient http;
-  http.begin(testconn);
+ 
   boolean inet = false;
+  Serial.print("Testuji pripojeni na ");
+  Serial.println(testconn);
+  http.begin(testconn);
   int httpCode = http.GET(); //zavolá stránku pro test dostupnosti serveru
   String payload = http.getString();
   if (payload.charAt(0) == '1') {
     inet = true;
   }
+  Serial.print("Vratilo se: ");
+  Serial.println(payload);
  
   if (!inet) { //nepodařilo se připojit k AP, případně není dostupný server
+    Serial.println("Ackoliv je WiFi pripojena, nepodarilo se kontakovat server, restart!");
     WiFi.mode(WIFI_OFF); //vypne WiFi
     delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
-    ESP.deepSleep(1e6);//za jednu sekundu se restartuje
+    //ESP.deepSleep(1e6);//za jednu sekundu se restartuje
+    ESP.restart();
   }
  
   //začneme měřit
@@ -164,7 +171,7 @@ void setup() {
   Serial.println(l);
  
   //pošle data jako GET
-  String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l);
+  String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l) + "&ver=" + ver;
   Serial.println(data);
   http.begin(data);
   httpCode = http.GET();
@@ -178,7 +185,7 @@ void setup() {
   else {
     Serial.println("Nepovedlo se připojit se na server. Restart!");
     WiFi.mode(WIFI_OFF); //vypne WiFi
-  delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
+    delay(poWiFi);//počká poWiFI sekund na vypnutí WiFi
     ESP.deepSleep(1e6);//za jednu sekundu se restartuje
   }
  
