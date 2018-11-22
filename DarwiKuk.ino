@@ -9,11 +9,11 @@ unsigned long zacatek = millis(); //uloží si aktuální čas kvůli měření 
 //    =                                                     =
 //    =======================================================
 //
-//    DarwiKuk 2.1_7 2018-08-27
-int ver = 7;
-//      * Aktualizována knihovna WiFiManager 0.14.0
-//      * Aktualizována knihovna esp8266 2.4.2 
+//    DarwiKuk 2.2_8 2018-10-06
+int ver = 8;
+//      * posílá také sílu signálu Wi-Fi
  
+//WEMOS D1 mini Pro drivery: https://www.silabs.com/products/development-tools/software/usb-to-uart-bridge-vcp-drivers
  
 //prodleva mezi měřeními v sekundach
 const unsigned int prodleva = 60 * 5 + 22; //5 minut, +22 korekce
@@ -63,6 +63,12 @@ String macRead() {
   m.remove(2, 1);  m.remove(4, 1);  m.remove(6, 1);  m.remove(8, 1);  m.remove(10, 1);
   return (m);
 }
+ 
+//================================================
+//vrací sílu signálu RSSI
+int RSSI () {
+  return(WiFi.RSSI());
+  }
  
 //================================================
 //vraci hodnotu měření
@@ -117,7 +123,7 @@ void kontrolaVerze() {
   else {
     if (novaVerze > ver) {
       Serial.print("Je tu nova verze "); Serial.println(novaVerze);
-      Serial.print("Zahajuji update systemu.");
+      Serial.println("Zahajuji update systemu.");
       ESPhttpUpdate.update(updateBin);
       Serial.println("Z nejakeho duvodu se nepodarilo provest update. Zkusim to tedy priste...");
     }
@@ -196,9 +202,15 @@ void setup() {
  
   kontrolaVerze(); //zkontroluje verzi FW a případně provede update
  
+  short rssi = RSSI();
+  Serial.print("Síla signálu Wi-Fi je: ");
+  Serial.print(rssi);
+  Serial.print(" dB");
+ 
+ 
   //pošle data jako GET
   Serial.println(); Serial.println("Posilam data na server:");
-  String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l) + "&ver=" + ver;
+  String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l) + "&rssi=" + String(rssi) + "&ver=" + ver;
   Serial.println(data);
   boolean zapsano = false;
   do {
