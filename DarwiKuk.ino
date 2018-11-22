@@ -9,29 +9,30 @@ unsigned long zacatek = millis(); //uloží si aktuální čas kvůli měření 
 //    =                                                     =
 //    =======================================================
 //
-//    DarwiKuk 1.4_5 2018-02-22
-String ver = "5";
+//    DarwiKuk 2.0_6 2018-02-27
+int ver = 6;
+//      * Přidán automatický update FW, velmi významné vylepšení, proto změna verze na 2.0
 //      * Optimalizace proměnných
-//      * Zkrácení čekání před odpojením WiFi na 5 sekund
-//      * LEDka svítí krátce jen během připojování WiFi, případně stále, pokud je nastaven mód pro vložení SSID a hesla
 //      * Zpřesnění měření času potřebného pro spánek
-//      * Nahrazní funkce delay(), která v některých případech dělala WDT reset
-//      * Odstranění ověřování dostupnosti serveru, použije se přímo zápis měření
-//      * Přidaná prodleva 5 sekund pro zpracování http get dotazu
+//      * V případě neúspěšného poslání dat na server to zkouší ještě 15×
  
  
 //prodleva mezi měřeními v sekundach
-unsigned int prodleva = 60 * 5 + 21; //5 minut, +21 korekce
-//unsigned int prodleva = 30; //pro testování
-unsigned int poWiFi = 5 * 1000; //čas na odpojení WiFi před restartem
-String newData = "http://iot.darwiniana.cz/new_data.php"; //sem posílá data
+const unsigned int prodleva = 60 * 5 + 22; //5 minut, +22 korekce
+//const unsigned int prodleva = 30; //pro testování
+const unsigned int poWiFi = 5 * 1000; //čas na odpojení WiFi před restartem
+const String newData = "http://iot.darwiniana.cz/new_data.php"; //sem posílá data
 const unsigned int pocetMereni = 16; //počet měření kvůli přesnoti, musí být dělitelný 4
+unsigned int pocetOpakovaniGET = 16; //počet pokusů pro odeslání dat na server
+const String updateBin = "http://www.darwiniana.cz/soubory/DarwiKuk/DarwiKuk.bin"; //adresa bin souboru pro update FW
+const String updateVerze = "http://www.darwiniana.cz/soubory/DarwiKuk/verze.txt"; //adresa txt souboru s číslem aktuální verze
  
 #include <ESP8266WiFi.h>          //https://github.com/esp8266/Arduino
 #include <DNSServer.h>
 #include <ESP8266WebServer.h>
 #include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
 #include <ESP8266HTTPClient.h>
+#include <ESP8266httpUpdate.h>
  
 #define LED_PIN 2 // LED_PIN 2 neboli GPI02 neboli D4, interní LED která oznamuje komunikaci a nedostupnost internetu
 #define SER 115200 // 74800 je rychlost na které NodeMCU komunikuje po startu. Na 115200 vypisuje chybové hlášky, takže je vidět všechno co se děje
@@ -101,6 +102,35 @@ void pockat(unsigned long pockat) {
 }
  
 //================================================
+// kontrola verze FW a případně provede update
+void kontrolaVerze() {
+  HTTPClient http;
+  Serial.println("Kontroluji dostupnost nove verze.");
+  Serial.print("Bezim na verzi "); Serial.println(ver);
+  http.begin(updateVerze);
+  Serial.print("Dame serveru na reakci ");
+  pockat(poWiFi);//náhradní funkce za delay()
+  int httpCode = http.GET();
+  String payload = http.getString();
+  int novaVerze = payload.toInt();
+  if (!novaVerze) {
+    Serial.println("Nepodarilo se stahnout informace o dostupne verzi ze serveru.");
+  }
+  else {
+    if (novaVerze > ver) {
+      Serial.print("Je tu nova verze "); Serial.println(novaVerze);
+      Serial.print("Zahajuji update systemu.");
+      ESPhttpUpdate.update(updateBin);
+      Serial.println("Z nejakeho duvodu se nepodarilo provest update. Zkusim to tedy priste...");
+    }
+    else {
+      Serial.print("Neni nutny update, na serveru je k dispozici verze "); Serial.println(novaVerze);
+    }
+  }
+  http.end();
+}
+ 
+//================================================
 void setup() {
   Serial.begin(SER); //nastaví sériovou linku pro debug informace
   Serial.println(); Serial.println(); Serial.println();
@@ -166,35 +196,41 @@ void setup() {
   digitalWrite(LED_PIN, HIGH); //zhasne LEDku
   HTTPClient http;
  
+  kontrolaVerze(); //zkontroluje verzi FW a případně provede update
+ 
   //pošle data jako GET
+  Serial.println(); Serial.println("Posilam data na server:");
   String data = newData + "?mac=" + MAC + "&t=" + String(t) + "&h=" + String(h) + "&p=" + String(p) + "&l=" + String(l) + "&ver=" + ver;
   Serial.println(data);
-  http.begin(data);
-  Serial.print("Dame serveru cas na vyrizeni pozadavku ");
-  pockat (5 * 1000); //dáme serveru chvilku na odpověď
   boolean zapsano = false;
-  int httpCode = http.GET();//odešle data na server, zpět by se měla vrátit 1
-  if (httpCode > 0) {
-    String payload = http.getString();
-    Serial.print("Server vratil: ");
-    Serial.println(payload);//načte odeslaná data, měla by tm být 1
-    if (payload == "1") {
-      Serial.println("Data uspesne zapsana na server.");
-      zapsano = true;
+  do {
+    http.begin(data);
+    Serial.print("Dame serveru cas na vyrizeni pozadavku ");
+    pockat (5 * 1000); //dáme serveru chvilku na odpověď
+    int httpCode = http.GET();//odešle data na server, zpět by se měla vrátit 1
+    if (httpCode > 0) {
+      String payload = http.getString();
+      Serial.print("Server vratil: ");
+      Serial.println(payload);//načte odeslaná data, měla by tm být 1
+      if (payload == "1") {
+        Serial.println("Data uspesne zapsana na server.");
+        zapsano = true;
+      }
     }
-  }
-  else {
-    Serial.println("Chyba http");
-  }
+    else {
+      Serial.print("Chyba http, zbyva "); Serial.print(pocetOpakovaniGET) ; Serial.println(" pokusu ");
+      pocetOpakovaniGET--;
+    }
+    http.end();   //uzavře HTTP spojení
+  } while (!zapsano and pocetOpakovaniGET); //opakuj GET dokud se nepovede, nebo dokud nevycerpa pocet pokusu
  
-  if (!zapsano) {
+  if (!zapsano) { //když se nepovedlo data odeslat, tak restart
     WiFi.mode(WIFI_OFF); //vypne WiFi
-    Serial.print("Nepovedlo se připojit se na server. Restart za ");
+    Serial.print("Nepovedlo se odeslat data na server. Restart za ");
     pockat(poWiFi);//počká poWiFI sekund na vypnutí WiFi
     ESP.deepSleep(1e6);//za jednu sekundu se restartuje
   }
  
-  http.end();   //uzavře HTTP spojení
   WiFi.mode(WIFI_OFF); //vypne WiFi
   Serial.print("Pro ukonceni WiFi cekam ");
   pockat(poWiFi);//náhradní funkce za delay()
